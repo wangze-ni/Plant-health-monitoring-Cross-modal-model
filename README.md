@@ -4,7 +4,7 @@ Companion code for the manuscript *Transferable dielectric-excited artificial ol
 
 The model combines eight-channel gas sensor responses with molecular and electronic descriptors of seven volatile organic compounds (VOCs). For each sensor response, it predicts the stress type (drought, salt or heat) and the stress stage (0, 3, 6, 9 or 12 hours). The chemical descriptors are shared across samples. Each new sensor response is compared with the same seven compounds.
 
-This release provides the model architecture, sensor preprocessing functions and density functional theory (DFT) inputs. The example below runs a forward pass with randomly initialised weights. Reproducing the manuscript’s accuracy estimates requires the training and evaluation workflow and the data splits used in the study.
+The code implements the model architecture, sensor preprocessing, molecular descriptor construction and density functional theory (DFT) feature extraction. The example below uses the built-in adsorption features and runs a forward pass with randomly initialised weights.
 
 ## Run the model on a sample input
 
@@ -14,19 +14,19 @@ The example was tested on a CPU under Windows with Python 3.10.8, PyTorch 2.1.0,
 python -m pip install torch==2.1.0 rdkit==2025.9.3 numpy==1.26.1 pandas==2.1.2 openpyxl==3.1.5
 ```
 
-Run the following in Python from the same directory. It reads the supplied DFT files, builds the molecular descriptors from SMILES strings and processes two synthetic sensor responses. The shape check verifies that all three groups of DFT features were loaded.
+Run the following in Python from the same directory. It uses the adsorption-energy values stored in `dft_bank.py`, builds the molecular descriptors from SMILES strings and processes two synthetic sensor responses. The shape check verifies that the feature matrix contains seven compounds and six adsorption features per compound.
 
 ```python
 import torch
 
-from config import DFT_BAND_DIR, DFT_DOS_DIR, D_MODEL, MOL_DIM, TARGET_LEN
+from config import D_MODEL, MOL_DIM, TARGET_LEN
 from dft_bank import build_dft_feature_bank
 from model_fusion import CrossModalNetwork
 from voc_registry import build_knowledge_bank_tensors
 
 graphs, fingerprints = build_knowledge_bank_tensors()
-dft = build_dft_feature_bank(band_dir=DFT_BAND_DIR, dos_dir=DFT_DOS_DIR)
-assert dft.shape == (7, 41), f"Expected 7 compounds and 41 DFT features, got {dft.shape}"
+dft = build_dft_feature_bank()
+assert dft.shape == (7, 6), f"Expected 7 compounds and 6 adsorption features, got {dft.shape}"
 
 torch.manual_seed(42)
 model = CrossModalNetwork(d_sensor=D_MODEL, d_mol=MOL_DIM, d_dft=dft.shape[1])
@@ -48,15 +48,17 @@ for name, tensor in outputs.items():
 
 ## Model and chemical inputs
 
-The sensor encoder uses multiscale temporal convolutions, a bidirectional LSTM and attention pooling to summarise each response. The molecular encoder combines a graph representation with a 2,215-element fingerprint composed of Morgan fingerprint bits and MACCS keys. A separate encoder processes 41 DFT features per compound. Cross-attention uses the sensor representation as the query and the seven compound representations as keys and values. The stress probabilities then modulate the sensor features used to predict the stage.
+The sensor encoder uses multiscale temporal convolutions, a bidirectional LSTM and attention pooling to summarise each response. The molecular encoder combines a graph representation with a 2,215-element fingerprint composed of Morgan fingerprint bits and MACCS keys. A separate encoder processes the DFT feature vector, which contains six adsorption features per compound in the example above. Its input dimension is set from `dft.shape[1]`. Cross-attention uses the sensor representation as the query and the seven compound representations as keys and values. The stress probabilities then modulate the sensor features used to predict the stage.
 
 The compound order used by the fingerprints, DFT features and attention weights is **acetic acid, nonanal, decanoic acid, heptanal, hexanal, decanal and 2-octanone**.
 
-| DFT feature group | Features per compound | Source |
+| DFT feature group | Features per compound | Implementation |
 |---|---:|---|
-| Adsorption | 6 | Three adsorption energies and three derived quantities in [dft_bank.py](dft_bank.py) |
-| Band structure | 15 | One band table per compound in [band_structure/](dft_inputs/band_structure/) |
-| Density of states | 20 | Four descriptors each for total DOS and the C, H, O and Sn projected DOS in [DOS/](dft_inputs/DOS/) |
+| Adsorption | 6 | [dft_bank.py](dft_bank.py) combines three built-in adsorption energies with three derived quantities |
+| Band structure | 15 | [dft_band.py](dft_band.py) extracts band-edge energies, the band gap, dispersion, slopes, curvatures and gap statistics from band tables |
+| Density of states | 20 | [dft_dos.py](dft_dos.py) extracts four descriptors each for total DOS and the C, H, O and Sn projected DOS |
+
+Calling `build_dft_feature_bank()` without arguments returns the six adsorption features used in the example. The three energy values describe adsorption without an electric field, under a positive electric field and under a negative electric field. The derived quantities are the negative-field energy minus the zero-field energy, the negative-field energy minus the positive-field energy, and the difference between the absolute negative-field and zero-field energies.
 
 ## Using sensor recordings
 
@@ -78,5 +80,5 @@ The loader divides each recording into five equal segments. Within each segment 
 | [model_sensor.py](model_sensor.py), [model_molecule.py](model_molecule.py), [model_dft.py](model_dft.py) | Encoders for sensor responses, molecular structures and DFT features |
 | [model_fusion.py](model_fusion.py) | Cross-modal attention, stress classification and stage prediction |
 | [voc_registry.py](voc_registry.py) | Compound order, SMILES strings, molecular fingerprints and stress-to-VOC associations |
-| [dft_bank.py](dft_bank.py), [dft_band.py](dft_band.py), [dft_dos.py](dft_dos.py) | Construction of the DFT feature matrix |
+| [dft_bank.py](dft_bank.py), [dft_band.py](dft_band.py), [dft_dos.py](dft_dos.py) | Construction of adsorption, band-structure and DOS feature vectors |
 | [data_loader_sensor.py](data_loader_sensor.py), [config.py](config.py) | Sensor preprocessing, input dimensions and label mappings |
